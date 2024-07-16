@@ -52,7 +52,26 @@ async function run() {
         });
 
         // User Login
-       
+        app.post('/users/login', async (req, res) => {
+            const { emailOrMobile, pin } = req.body;
+        
+            try {
+                const user = await usersCollection.findOne({
+                    $or: [{ email: emailOrMobile }, { mobile: emailOrMobile }]
+                });
+                if (!user) return res.status(404).json({ error: 'User not found' });
+        
+                const isMatch = await bcrypt.compare(pin, user.pin);
+                if (!isMatch) return res.status(400).json({ error: 'Invalid credentials' });
+        
+                if (user.status !== 'approved') return res.status(403).json({ error: 'Account not approved by admin' });
+        
+                const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '1d' });
+                res.json({ token, user });
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
+        });
 
         // Ping to confirm a successful connection
         await client.db("admin").command({ ping: 1 });
