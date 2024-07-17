@@ -83,6 +83,26 @@ async function run() {
             res.send({ admin })
         })
 
+        app.get('/users/all',async(req,res)=>{
+            const result = await usersCollection.find().toArray();
+            res.send(result)
+        })
+
+          // Approve user
+          app.patch('/users/approve/:id', async (req, res) => {
+            try {
+                const user = await usersCollection.findOneAndUpdate(
+                    { _id: new ObjectId(req.params.id) },
+                    { $set: { status: 'approved' } },
+                    { returnOriginal: false }
+                );
+                if (!user.value) return res.status(404).send('User not found');
+                res.send(user.value);
+            } catch (err) {
+                res.status(500).send(err.message);
+            }
+        });
+
         // Logout endpoint (optional)
         app.post('/users/logout', (req, res) => {
             // Here you could handle any server-side cleanup if necessary
