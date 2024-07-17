@@ -71,6 +71,18 @@ async function run() {
             }
         });
 
+        // admin 
+        app.get('/users/admin/:email', async (req, res) => {
+            const email = req.params.email;
+            const query = { email: email }
+            const user = await usersCollection.findOne(query)
+            let admin = false;
+            if (user) {
+                admin = user?.role === 'admin'
+            }
+            res.send({ admin })
+        })
+
         // Logout endpoint (optional)
         app.post('/users/logout', (req, res) => {
             // Here you could handle any server-side cleanup if necessary
