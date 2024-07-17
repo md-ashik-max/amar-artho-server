@@ -88,20 +88,41 @@ async function run() {
             res.send(result)
         })
 
-          // Approve user
-          app.patch('/users/approve/:id', async (req, res) => {
-            try {
-                const user = await usersCollection.findOneAndUpdate(
-                    { _id: new ObjectId(req.params.id) },
-                    { $set: { status: 'approved' } },
-                    { returnOriginal: false }
-                );
-                if (!user.value) return res.status(404).send('User not found');
-                res.send(user.value);
-            } catch (err) {
-                res.status(500).send(err.message);
-            }
+         // Approve user
+         app.patch('/users/approve/:id', async (req, res) => {
+            const id = req.params.id;
+            const filter = { _id: new ObjectId(id) };
+            const updatedDoc = {
+                $set: {
+                    status: 'approved'
+                }
+            };
+            const result = await usersCollection.updateOne(filter, updatedDoc);
+            res.send(result);
         });
+
+        // Block user
+        app.patch('/users/block/:id', async (req, res) => {
+            const id = req.params.id;
+            const filter = { _id: new ObjectId(id) };
+            const updatedDoc = {
+                $set: {
+                    status: 'blocked'
+                }
+            };
+            const result = await usersCollection.updateOne(filter, updatedDoc);
+            res.send(result);
+        });
+
+
+        // Delete user
+        app.delete('/users/:id', async (req, res) => {
+            const id = req.params.id;
+            const filter = { _id: new ObjectId(id) };
+            const result = await usersCollection.deleteOne(filter);
+            res.send(result);
+        });
+
 
         // Logout endpoint (optional)
         app.post('/users/logout', (req, res) => {
