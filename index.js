@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const app = express();
@@ -13,7 +13,6 @@ app.use(express.json());
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.xnvb7mx.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
     serverApi: {
         version: ServerApiVersion.v1,
@@ -24,7 +23,6 @@ const client = new MongoClient(uri, {
 
 async function run() {
     try {
-        // Connect the client to the server
         await client.connect();
         const database = client.db("arthoDB");
         const usersCollection = database.collection("users");
@@ -54,20 +52,43 @@ async function run() {
         // User Login
         app.post('/users/login', async (req, res) => {
             const { emailOrMobile, pin } = req.body;
-        
+
             try {
                 const user = await usersCollection.findOne({
                     $or: [{ email: emailOrMobile }, { mobile: emailOrMobile }]
                 });
                 if (!user) return res.status(404).json({ error: 'User not found' });
-        
+
                 const isMatch = await bcrypt.compare(pin, user.pin);
                 if (!isMatch) return res.status(400).json({ error: 'Invalid credentials' });
-        
-                if (user.status !== 'approved') return res.status(403).json({ error: 'Account not approved by admin' });
-        
+
+                if (user.status !== 'approved') return res.status(403).json({ error: 'Account not approved by admin. Try again 1h later' });
+
                 const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '1d' });
                 res.json({ token, user });
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Logout endpoint (optional)
+        app.post('/users/logout', (req, res) => {
+            // Here you could handle any server-side cleanup if necessary
+            res.status(200).json({ message: 'Logged out successfully' });
+        });
+
+        // Get current user info
+        app.get('/users/me', async (req, res) => {
+            const token = req.headers.authorization?.split(' ')[1];
+
+            if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+            try {
+                const decoded = jwt.verify(token, process.env.JWT_SECRET);
+                const user = await usersCollection.findOne({ _id: new ObjectId(decoded.id) });
+                if (!user) return res.status(404).json({ error: 'User not found' });
+
+                res.json(user);
             } catch (error) {
                 res.status(500).json({ error: error.message });
             }
