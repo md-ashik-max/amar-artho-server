@@ -26,6 +26,22 @@ async function run() {
         await client.connect();
         const database = client.db("arthoDB");
         const usersCollection = database.collection("users");
+        const transactionsCollection = database.collection("transactions");
+
+        const JWT_SECRET = process.env.JWT_SECRET;
+
+        // Middleware to verify JWT
+        const verifyToken = (req, res, next) => {
+            const token = req.headers.authorization?.split(' ')[1];
+            if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+            jwt.verify(token, JWT_SECRET, (err, decoded) => {
+                if (err) return res.status(403).json({ error: 'Invalid token' });
+                req.userId = decoded.id;
+                next();
+            });
+        };
+
 
         // User Registration
         app.post('/users/register', async (req, res) => {
@@ -83,13 +99,13 @@ async function run() {
             res.send({ admin })
         })
 
-        app.get('/users/all',async(req,res)=>{
+        app.get('/users/all', async (req, res) => {
             const result = await usersCollection.find().toArray();
             res.send(result)
         })
 
-         // Approve user
-         app.patch('/users/approve/:id', async (req, res) => {
+        // Approve user
+        app.patch('/users/approve/:id', async (req, res) => {
             const id = req.params.id;
             const filter = { _id: new ObjectId(id) };
             const updatedDoc = {
@@ -121,6 +137,147 @@ async function run() {
             const filter = { _id: new ObjectId(id) };
             const result = await usersCollection.deleteOne(filter);
             res.send(result);
+        });
+
+        // Send Money Endpoint
+        app.post('/transactions/send', verifyToken, async (req, res) => {
+            const { receiverMobile, amount, pin } = req.body;
+
+            if (amount < 50) return res.status(400).json({ error: 'Minimum transaction amount is 50 Taka' });
+
+            try {
+                const sender = await usersCollection.findOne({ _id: new ObjectId(req.userId) });
+
+                if (!sender) return res.status(404).json({ error: 'Sender not found' });
+                const isPinMatch = await bcrypt.compare(pin, sender.pin);
+                if (!isPinMatch) return res.status(400).json({ error: 'Invalid PIN' });
+
+                const receiver = await usersCollection.findOne({ mobile: receiverMobile });
+                if (!receiver) return res.status(404).json({ error: 'Receiver not found' });
+
+                const transactionFee = amount > 100 ? 5 : 0;
+                const totalAmount = amount + transactionFee;
+                if (sender.balance < totalAmount) return res.status(400).json({ error: 'Insufficient balance' });
+
+                const updatedSenderBalance = sender.balance - totalAmount;
+                const updatedReceiverBalance = receiver.balance + amount;
+
+                await usersCollection.updateOne({ _id: sender._id }, { $set: { balance: updatedSenderBalance } });
+                await usersCollection.updateOne({ _id: receiver._id }, { $set: { balance: updatedReceiverBalance } });
+
+                // Log the transaction
+                const transaction = {
+                    type: 'send',
+                    senderId: sender._id,
+                    receiverId: receiver._id,
+                    amount,
+                    fee: transactionFee,
+                    date: new Date()
+                };
+                await transactionsCollection.insertOne(transaction);
+
+                res.status(200).json({ message: 'Transaction successful' });
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+
+        // Cash In
+
+        app.post('/cashIn', async (req, res) => {
+            const cashInDetails = req.body;
+            const result = await transactionsCollection.insertOne(cashInDetails);
+            res.send(result)
+
+        })
+        // app.post('/api/cash-in', async (req, res) => {
+        //     const { userMobile, amount, agentMobile } = req.body;
+        //     const token = req.headers.authorization?.split(' ')[1];
+
+        //     if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+        //     try {
+        //         const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        //         const userFilter = { mobile: userMobile };
+        //         const agentFilter = { mobile: agentMobile };
+
+        //         const user = await usersCollection.findOne(userFilter);
+        //         const agent = await usersCollection.findOne(agentFilter);
+
+        //         if (!user || !agent) return res.status(404).json({ error: 'User or agent not found' });
+        //         const userUpdate = {
+        //             $set: { balance: user.balance + amount }
+        //         };
+        //         const agentUpdate = {
+        //             $set: { balance: agent.balance - amount }
+        //         };
+
+        //         await usersCollection.updateOne(userFilter, userUpdate);
+        //         await usersCollection.updateOne(agentFilter, agentUpdate);
+
+        //         res.status(200).json({ message: 'Cash in successful' });
+        //     } catch (error) {
+        //         res.status(500).json({ error: error.message });
+        //     }
+        // });
+
+        // Cash Out
+        app.post('/cashOut', verifyToken, async (req, res) => {
+            const { userMobile, agentMobile, amount, pin, userName, balance } = req.body;
+
+            try {
+                const user = await usersCollection.findOne({ mobile: userMobile });
+
+                if (!user) return res.status(404).json({ error: 'User not found' });
+                const isPinMatch = await bcrypt.compare(pin, user.pin);
+                if (!isPinMatch) return res.status(400).json({ error: 'Invalid PIN' });
+
+                const agent = await usersCollection.findOne({ mobile: agentMobile });
+                if (!agent) return res.status(404).json({ error: 'Agent not found' });
+
+                const cashOutFee = amount * 0.015;
+                const totalAmount = amount + cashOutFee;
+                if (user.balance < totalAmount) return res.status(400).json({ error: 'Insufficient balance' });
+
+                const updatedUserBalance = user.balance - totalAmount;
+                const updatedAgentBalance = agent.balance + amount;
+
+                await usersCollection.updateOne({ _id: user._id }, { $set: { balance: updatedUserBalance } });
+                await usersCollection.updateOne({ _id: agent._id }, { $set: { balance: updatedAgentBalance } });
+
+                // Log the transaction
+                const transaction = {
+                    type: 'Cash Out',
+                    userMobile: userMobile,
+                    agentMobile: agentMobile,
+                    amount,
+                    userName,
+                    balance,
+                    fee: cashOutFee,
+                    date: new Date()
+                };
+                await transactionsCollection.insertOne(transaction);
+
+                res.status(200).json({ message: 'Cash out successful' });
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Fetch transaction history by user mobile
+        app.get('/transactions/history/:mobile', verifyToken, async (req, res) => {
+            const mobile = req.params.mobile;
+
+            try {
+                const user = await usersCollection.findOne({ mobile });
+                if (!user) return res.status(404).json({ error: 'User not found' });
+
+                const transactions = await transactionsCollection.find({ userMobile: mobile }).sort({ date: -1 }).limit(10).toArray();
+                res.json(transactions);
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
         });
 
 
