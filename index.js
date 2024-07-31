@@ -99,6 +99,17 @@ async function run() {
             res.send({ admin })
         })
 
+        // Check if user is agent
+        app.get('/users/agent/:email', async (req, res) => {
+            const email = req.params.email;
+            const user = await usersCollection.findOne({ email: email });
+            let isAgent = false;
+            if (user) {
+                isAgent = user.role === 'agent';
+            }
+            res.send({ agent: isAgent });
+        });
+
         app.get('/users/all', async (req, res) => {
             const result = await usersCollection.find().toArray();
             res.send(result)
@@ -191,36 +202,57 @@ async function run() {
             res.send(result)
 
         })
-        // app.post('/api/cash-in', async (req, res) => {
-        //     const { userMobile, amount, agentMobile } = req.body;
-        //     const token = req.headers.authorization?.split(' ')[1];
 
-        //     if (!token) return res.status(401).json({ error: 'Unauthorized' });
+        // Fetch cash-in requests by agent mobile and type
+        app.get('/cashInRequest/:mobile', async (req, res) => {
+            const mobile = req.params.mobile;
+            const result = await transactionsCollection.find({
+                agentMobile: mobile,
+                type: "Cash In"
+            }).toArray();
+            res.send(result)
+        });
 
-        //     try {
-        //         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        //         const userFilter = { mobile: userMobile };
-        //         const agentFilter = { mobile: agentMobile };
 
-        //         const user = await usersCollection.findOne(userFilter);
-        //         const agent = await usersCollection.findOne(agentFilter);
+        // Accept Cash-In Request
+        app.post('/cashIn/accept', verifyToken, async (req, res) => {
+            try {
+                const { requestId, agentMobile, userMobile, amount } = req.body;
 
-        //         if (!user || !agent) return res.status(404).json({ error: 'User or agent not found' });
-        //         const userUpdate = {
-        //             $set: { balance: user.balance + amount }
-        //         };
-        //         const agentUpdate = {
-        //             $set: { balance: agent.balance - amount }
-        //         };
+                // Fetch the cash-in request by ID
+                const request = await transactionsCollection.findOne({ _id: new ObjectId(requestId) });
+                if (!request) return res.status(404).json({ error: 'Cash-in request not found' });
+                if (request.status === 'accepted') return res.status(400).json({ error: 'Request already accepted' });
 
-        //         await usersCollection.updateOne(userFilter, userUpdate);
-        //         await usersCollection.updateOne(agentFilter, agentUpdate);
+                // Fetch the user and agent involved in the transaction
+                const user = await usersCollection.findOne({ mobile: userMobile });
+                const agent = await usersCollection.findOne({ mobile: agentMobile });
 
-        //         res.status(200).json({ message: 'Cash in successful' });
-        //     } catch (error) {
-        //         res.status(500).json({ error: error.message });
-        //     }
-        // });
+                // Check if agent has sufficient balance
+                if (agent.balance < amount) {
+                    return res.status(400).json({ error: 'Insufficient balance in agent account' });
+                }
+
+                // Update user and agent balances
+                const updatedUserBalance = user.balance + amount;
+                const updatedAgentBalance = agent.balance - amount;
+
+                await usersCollection.updateOne({ _id: user._id }, { $set: { balance: updatedUserBalance } });
+                await usersCollection.updateOne({ _id: agent._id }, { $set: { balance: updatedAgentBalance } });
+
+                // Update request status to 'accepted'
+                await transactionsCollection.updateOne(
+                    { _id: new ObjectId(requestId) },
+                    { $set: { status: 'accepted' } }
+                );
+
+                res.status(200).json({ message: 'Cash-in request accepted successfully' });
+            } catch (error) {
+                console.error('Error accepting cash-in request:', error);
+                res.status(500).json({ error: 'Server error' });
+            }
+        });
+
 
         // Cash Out
         app.post('/cashOut', verifyToken, async (req, res) => {
